@@ -14,6 +14,7 @@
 #include "mqtt.h"
 #include "display.h"
 #include "supabase.h"
+#include "webui.h"
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 
@@ -69,6 +70,15 @@ void setup() {
   // WiFi
   wifi_init(ssid, pass);
 
+  // If WiFi failed, start AP hotspot so credentials can be set via browser
+  if (!wifi_connected()) {
+    Serial.println("[Setup] WiFi failed — starting AP for configuration");
+    webui_start_ap();
+  }
+
+  // Web UI + OTA (serves /config and /update; also starts ArduinoOTA)
+  webui_init();
+
   // NTP
   if (wifi_connected()) {
     timeClient.begin();
@@ -91,6 +101,7 @@ void loop() {
   uint32_t now = millis();
 
   wifi_loop();
+  webui_loop();       // handle HTTP config + OTA requests
   mqtt_loop(zones);
   zones_loop(zones);
 
