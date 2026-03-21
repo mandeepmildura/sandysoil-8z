@@ -160,6 +160,7 @@ void mqttPublishStatus(Zone zones[MAX_ZONES], float supplyPsi) {
   doc["online"]     = true;
   doc["supply_psi"] = supplyPsi;
   doc["uptime"]     = millis() / 1000;
+  doc["rssi"]       = WiFi.RSSI();
   JsonArray arr = doc.createNestedArray("zones");
   for (int i = 0; i < MAX_ZONES; i++) {
     JsonObject z = arr.createNestedObject();
@@ -204,12 +205,14 @@ void mqttPublishAlert(const char* message) {
 
 void mqttPublishDiscovery(Zone zones[MAX_ZONES]) {
   if (!_mqtt.connected()) return;
+
+  // Zone switches
   for (int i = 0; i < MAX_ZONES; i++) {
-    char topic[128], payload[512];
+    char topic[128], payload[768];
     snprintf(topic, sizeof(topic),
              "%s/switch/%s_zone%d/config", MQTT_DISCOVERY, DEVICE_ID, i + 1);
 
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<768> doc;
     char uid[32];   snprintf(uid,   sizeof(uid),   "%s_zone%d",   DEVICE_ID, i + 1);
     char name[32];  snprintf(name,  sizeof(name),  "%s Zone %d",  DEVICE_NAME, i + 1);
     char stTopic[64]; snprintf(stTopic, sizeof(stTopic), MQTT_ZONE_STATE, i + 1);
@@ -222,30 +225,92 @@ void mqttPublishDiscovery(Zone zones[MAX_ZONES]) {
     doc["value_template"] = "{{ 'ON' if value_json.on else 'OFF' }}";
     doc["payload_on"]     = "{\"cmd\":\"on\",\"duration\":10}";
     doc["payload_off"]    = "{\"cmd\":\"off\"}";
+    doc["icon"]           = "mdi:water";
+    doc["availability_topic"] = MQTT_STATUS;
+    doc["availability_template"] = "{{ 'online' if value_json.online else 'offline' }}";
     JsonObject dev = doc.createNestedObject("device");
-    dev["identifiers"] = DEVICE_ID;
-    dev["name"]        = DEVICE_NAME;
-    dev["model"]       = "KC868-A8v3";
-    dev["manufacturer"]= "KinCony / Sandy Soil Automations";
+    dev["identifiers"]  = DEVICE_ID;
+    dev["name"]         = DEVICE_NAME;
+    dev["model"]        = "KC868-A8v3";
+    dev["manufacturer"] = "KinCony";
+    dev["sw_version"]   = FW_VERSION;
     serializeJson(doc, payload);
     _mqtt.publish(topic, payload, true);
   }
 
   // Supply pressure sensor
-  char topic[128], payload[512];
-  snprintf(topic, sizeof(topic), "%s/sensor/%s_supply/config", MQTT_DISCOVERY, DEVICE_ID);
-  StaticJsonDocument<512> doc;
-  doc["name"]               = DEVICE_NAME " Supply PSI";
-  doc["unique_id"]          = DEVICE_ID "_supply_psi";
-  doc["state_topic"]        = MQTT_STATUS;
-  doc["value_template"]     = "{{ value_json.supply_psi }}";
-  doc["unit_of_measurement"]= "PSI";
-  doc["device_class"]       = "pressure";
-  JsonObject dev = doc.createNestedObject("device");
-  dev["identifiers"] = DEVICE_ID;
-  dev["name"]        = DEVICE_NAME;
-  serializeJson(doc, payload);
-  _mqtt.publish(topic, payload, true);
+  {
+    char topic[128], payload[768];
+    snprintf(topic, sizeof(topic), "%s/sensor/%s_supply/config", MQTT_DISCOVERY, DEVICE_ID);
+    StaticJsonDocument<768> doc;
+    doc["name"]               = DEVICE_NAME " Supply PSI";
+    doc["unique_id"]          = DEVICE_ID "_supply_psi";
+    doc["state_topic"]        = MQTT_STATUS;
+    doc["value_template"]     = "{{ value_json.supply_psi }}";
+    doc["unit_of_measurement"]= "PSI";
+    doc["device_class"]       = "pressure";
+    doc["state_class"]        = "measurement";
+    doc["icon"]               = "mdi:gauge";
+    doc["availability_topic"] = MQTT_STATUS;
+    doc["availability_template"] = "{{ 'online' if value_json.online else 'offline' }}";
+    JsonObject dev = doc.createNestedObject("device");
+    dev["identifiers"]  = DEVICE_ID;
+    dev["name"]         = DEVICE_NAME;
+    dev["model"]        = "KC868-A8v3";
+    dev["manufacturer"] = "KinCony";
+    dev["sw_version"]   = FW_VERSION;
+    serializeJson(doc, payload);
+    _mqtt.publish(topic, payload, true);
+  }
 
-  Serial.println("[MQTT] Discovery published");
+  // Firmware version sensor
+  {
+    char topic[128], payload[768];
+    snprintf(topic, sizeof(topic), "%s/sensor/%s_firmware/config", MQTT_DISCOVERY, DEVICE_ID);
+    StaticJsonDocument<768> doc;
+    doc["name"]           = DEVICE_NAME " Firmware";
+    doc["unique_id"]      = DEVICE_ID "_firmware";
+    doc["state_topic"]    = MQTT_STATUS;
+    doc["value_template"] = "{{ value_json.fw }}";
+    doc["icon"]           = "mdi:chip";
+    doc["entity_category"]= "diagnostic";
+    doc["availability_topic"] = MQTT_STATUS;
+    doc["availability_template"] = "{{ 'online' if value_json.online else 'offline' }}";
+    JsonObject dev = doc.createNestedObject("device");
+    dev["identifiers"]  = DEVICE_ID;
+    dev["name"]         = DEVICE_NAME;
+    dev["model"]        = "KC868-A8v3";
+    dev["manufacturer"] = "KinCony";
+    dev["sw_version"]   = FW_VERSION;
+    serializeJson(doc, payload);
+    _mqtt.publish(topic, payload, true);
+  }
+
+  // WiFi RSSI sensor
+  {
+    char topic[128], payload[768];
+    snprintf(topic, sizeof(topic), "%s/sensor/%s_rssi/config", MQTT_DISCOVERY, DEVICE_ID);
+    StaticJsonDocument<768> doc;
+    doc["name"]               = DEVICE_NAME " WiFi RSSI";
+    doc["unique_id"]          = DEVICE_ID "_rssi";
+    doc["state_topic"]        = MQTT_STATUS;
+    doc["value_template"]     = "{{ value_json.rssi }}";
+    doc["unit_of_measurement"]= "dBm";
+    doc["device_class"]       = "signal_strength";
+    doc["state_class"]        = "measurement";
+    doc["icon"]               = "mdi:wifi";
+    doc["entity_category"]    = "diagnostic";
+    doc["availability_topic"] = MQTT_STATUS;
+    doc["availability_template"] = "{{ 'online' if value_json.online else 'offline' }}";
+    JsonObject dev = doc.createNestedObject("device");
+    dev["identifiers"]  = DEVICE_ID;
+    dev["name"]         = DEVICE_NAME;
+    dev["model"]        = "KC868-A8v3";
+    dev["manufacturer"] = "KinCony";
+    dev["sw_version"]   = FW_VERSION;
+    serializeJson(doc, payload);
+    _mqtt.publish(topic, payload, true);
+  }
+
+  Serial.printf("[MQTT] HA discovery published (%d zones + 3 sensors)\n", MAX_ZONES);
 }
