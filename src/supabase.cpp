@@ -20,19 +20,35 @@ void supabaseInit() {
   Serial.printf("[Supabase] Logging to %s\n", cfg.supabase_url);
 }
 
+// Device UUID in Supabase devices table
+#define SUPABASE_DEVICE_UUID "6e276ee9-224d-4529-b96b-b165687f6e94"
+
 void supabaseLog(float supplyPsi, Zone zones[MAX_ZONES]) {
   if (strlen(cfg.supabase_url) == 0 || strlen(cfg.supabase_key) == 0) return;
 
-  JsonDocument doc;
-  doc["device_id"]   = DEVICE_ID;
-  doc["supply_psi"]  = supplyPsi;
-
-  JsonArray zonesArr = doc["zones"].to<JsonArray>();
+  // Build payload matching the MQTT bridge format
+  JsonDocument inner;
+  inner["device"]     = DEVICE_ID;
+  inner["fw"]         = FW_VERSION;
+  inner["online"]     = true;
+  inner["supply_psi"] = supplyPsi;
+  inner["uptime"]     = millis() / 1000;
+  JsonArray zonesArr  = inner["zones"].to<JsonArray>();
   for (int i = 0; i < MAX_ZONES; i++) {
     JsonObject z = zonesArr.add<JsonObject>();
-    z["id"]  = i + 1;
-    z["on"]  = zones[i].manualOn || zones[i].scheduleActive;
+    z["id"]    = i + 1;
+    z["name"]  = zones[i].name;
+    z["on"]    = zones[i].manualOn || zones[i].scheduleActive;
+    ZoneState st = getZoneState(zones[i]);
+    z["state"] = (st == ZONE_MANUAL) ? "manual" :
+                 (st == ZONE_SCHEDULE) ? "schedule" : "off";
   }
+
+  // Wrap in the device_telemetry row format
+  JsonDocument doc;
+  doc["device_id"] = SUPABASE_DEVICE_UUID;
+  doc["topic"]     = cfg.mqtt_base_topic + String("/status");
+  doc["payload"]   = inner;
 
   String payload;
   serializeJson(doc, payload);
