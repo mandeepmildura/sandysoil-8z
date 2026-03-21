@@ -140,6 +140,19 @@ void setup() {
   // 11. Supabase
   supabaseInit();
 
+  // 12. Auto-check for firmware update on boot
+  if (wifiOk) {
+    displayBoot("OTA check...");
+    String newVer, dlUrl;
+    if (otaCheckForUpdate(newVer, dlUrl)) {
+      Serial.printf("[OTA] Update available: %s -> %s\n", FW_VERSION, newVer.c_str());
+      Serial.println("[OTA] Will update on next boot or via dashboard/MQTT");
+      // Don't auto-flash on boot — just log it. Use MQTT or dashboard to trigger.
+    } else {
+      Serial.println("[OTA] Firmware is up to date");
+    }
+  }
+
   Serial.println("[Setup] Ready\n");
   displayBoot("Ready");
   delay(800);

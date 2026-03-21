@@ -1,6 +1,7 @@
 #include "mqtt.h"
 #include "zones.h"
 #include "storage.h"
+#include "ota_github.h"
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
@@ -53,6 +54,39 @@ static void onMessage(char* topic, byte* payload, unsigned int length) {
     Serial.println("[MQTT] Sync requested");
     mqttPublishStatus(_zones, 0);
     for (int i = 0; i < MAX_ZONES; i++) mqttPublishZone(i, _zones[i]);
+    return;
+  }
+
+  // OTA command: .../cmd/ota
+  if (strcmp(topic, MQTT_BASE "/cmd/ota") == 0) {
+    StaticJsonDocument<256> doc;
+    deserializeJson(doc, msg);
+    const char* action = doc["action"] | "update";
+
+    if (strcmp(action, "check") == 0) {
+      Serial.println("[MQTT] OTA check requested");
+      String newVer, dlUrl;
+      bool avail = otaCheckForUpdate(newVer, dlUrl);
+      char resp[256];
+      snprintf(resp, sizeof(resp),
+        "{\"update_available\":%s,\"current\":\"%s\",\"latest\":\"%s\"}",
+        avail ? "true" : "false", FW_VERSION, newVer.c_str());
+      _mqtt.publish(MQTT_BASE "/ota/status", resp);
+    } else if (strcmp(action, "update") == 0) {
+      Serial.println("[MQTT] OTA update requested via MQTT");
+      String newVer, dlUrl;
+      if (otaCheckForUpdate(newVer, dlUrl)) {
+        char resp[128];
+        snprintf(resp, sizeof(resp),
+          "{\"status\":\"downloading\",\"version\":\"%s\"}", newVer.c_str());
+        _mqtt.publish(MQTT_BASE "/ota/status", resp);
+        otaSetPending(dlUrl);
+      } else {
+        _mqtt.publish(MQTT_BASE "/ota/status",
+          "{\"status\":\"up_to_date\",\"version\":\"" FW_VERSION "\"}");
+      }
+    }
+    return;
   }
 }
 
@@ -80,6 +114,7 @@ static void reconnect() {
     }
     _mqtt.subscribe(MQTT_BASE "/all/off");
     _mqtt.subscribe(MQTT_BASE "/cmd/sync");
+    _mqtt.subscribe(MQTT_BASE "/cmd/ota");
 
     mqttPublishStatus(_zones, 0);
     for (int i = 0; i < MAX_ZONES; i++) mqttPublishZone(i, _zones[i]);

@@ -28,7 +28,7 @@
 #define OLED_HEIGHT         64
 
 // ── FIRMWARE ──────────────────────────────────
-#define FW_VERSION          "2.2.0"
+#define FW_VERSION          "2.3.0"
 
 // ── GITHUB OTA ────────────────────────────────
 #define GITHUB_OWNER        "mandeepmildura"
