@@ -1,7 +1,20 @@
 # Sandy Soil 8Z — Irrigation Controller
 
 8-zone automated irrigation controller for farm use.
-Built on the **KC868-A8v3** (ESP32-S3) with MQTT remote control, Home Assistant integration, and cloud logging.
+Built on the **KC868-A8v3** (ESP32-S3, 16 MB flash) with web dashboard, MQTT remote control, Home Assistant integration, OTA updates, and cloud logging.
+
+---
+
+## Overview
+
+Sandy Soil 8Z is a standalone irrigation controller that runs on a KinCony KC868-A8v3 board. It drives 8 relay-controlled solenoid valves via a PCF8575 I2C expander, monitors supply line pressure through an analog sensor, and provides multiple interfaces for control and monitoring:
+
+- **Web dashboard** — live zone control, pressure display, and settings from any browser on your network
+- **MQTT** — JSON commands from Home Assistant, Node-RED, or any MQTT client
+- **Schedules** — day-of-week + time-based automatic watering (NTP-synced AEST)
+- **Cloud logging** — optional Supabase integration for historical data
+
+On first boot the device starts a WiFi hotspot for initial configuration. After that, all settings (WiFi, MQTT, pressure, Supabase) are editable from the web dashboard's Settings panel — no re-flashing needed.
 
 ---
 
@@ -9,25 +22,26 @@ Built on the **KC868-A8v3** (ESP32-S3) with MQTT remote control, Home Assistant 
 
 | Component | Detail |
 |-----------|--------|
-| Microcontroller | KC868-A8v3 — ESP32-S3, 8 MB flash |
-| Relay expander | PCF8575 (I2C, 16-bit) — active-LOW, channels 0–7 |
-| Pressure sensor | Analog input via ADC |
-| Display | Local LCD/OLED |
-| Connectivity | Wi-Fi (2.4 GHz), HiveMQ Cloud MQTT over TLS |
+| Board | KC868-A8v3 — ESP32-S3, 16 MB flash, PSRAM |
+| Relay expander | PCF8575 (I2C addr 0x21) — active-LOW, channels 0–7 |
+| Pressure sensor | 0–5V ratiometric on GPIO1 (ADC1_CH0) |
+| Display | SSD1306 0.96" OLED (I2C addr 0x3C, SDA=GPIO8, SCL=GPIO18) |
+| Connectivity | WiFi 2.4 GHz, HiveMQ Cloud MQTT over TLS (port 8883) |
 
 ---
 
 ## Features
 
-- **8 independent irrigation zones** via relay control
-- **Schedule-based watering** — day-of-week + time, NTP-synced (AEST UTC+10)
-- **Manual override** — on/off with optional duration timer
-- **Water pressure monitoring** — alerts via MQTT when supply drops below 5 PSI
-- **MQTT control** — JSON commands from any client (Home Assistant, Node-RED, custom apps)
-- **Home Assistant auto-discovery** — zones appear as switches, pressure as sensor
-- **Supabase cloud logging** — historical pressure and zone activity
-- **Web config UI** — update Wi-Fi and MQTT credentials via browser (no re-flash needed)
-- **OTA firmware updates** — upload new firmware via browser or VS Code
+- **8 independent zones** — relay control with manual + scheduled modes
+- **Web dashboard** at `http://<board-ip>/` — zone on/off, duration, pressure, settings
+- **WiFi setup portal** — hotspot on first boot for zero-config provisioning
+- **WiFi credential editing** — change SSID/password from the Settings panel at any time
+- **OTA firmware updates** — browser upload at `/update` or VS Code/PlatformIO over-the-air
+- **MQTT control** — JSON commands, status publish, Home Assistant auto-discovery
+- **Schedule-based watering** — per-zone day-of-week + time, NTP-synced (AEST UTC+10)
+- **Pressure monitoring** — low-pressure MQTT alerts when zones are running
+- **Supabase cloud logging** — periodic telemetry POST (optional)
+- **OLED display** — rotating status screens (PSI, active zones, WiFi/MQTT state)
 
 ---
 
@@ -35,21 +49,22 @@ Built on the **KC868-A8v3** (ESP32-S3) with MQTT remote control, Home Assistant 
 
 ```
 sandysoil-8z/
-├── platformio.ini              ← VS Code / PlatformIO build config
+├── platformio.ini                    Build config (VS Code + PlatformIO)
+├── README.md
 ├── src/
-│   ├── FarmControl_Irrigation.ino  ← Main setup/loop
-│   ├── zones.h / zones.cpp         ← Relay control, timers, schedules
-│   ├── mqtt.cpp                    ← MQTT client, HA discovery, commands
-│   ├── webui.h / webui.cpp         ← Web config page + OTA updates
-│   │
-│   │   (gitignored — create from examples below)
-│   ├── config.h                    ← Pin definitions, intervals, constants
-│   ├── secrets.h                   ← Wi-Fi / MQTT / Supabase credentials
-│   ├── storage.h / storage.cpp     ← NVS read/write
-│   ├── wifi_setup.h / .cpp         ← Wi-Fi init and reconnect
-│   ├── pressure.h / .cpp           ← ADC pressure reading
-│   ├── display.h / .cpp            ← LCD/OLED rendering
-│   └── supabase.h / .cpp           ← Cloud logging
+│   ├── FarmControl_Irrigation.ino    Main setup/loop
+│   ├── config.h                      Pin defs, constants, Config/Zone/Schedule structs
+│   ├── secrets.h                     Placeholder (credentials via web UI, not hardcoded)
+│   ├── secrets.h.example             Reference for credential defines
+│   ├── storage.h / storage.cpp       NVS persistence (config + zone names)
+│   ├── wifi_setup.h / wifi_setup.cpp WiFi connect + first-boot setup portal
+│   ├── zones.h / zones.cpp           PCF8575 relay driver, timers, schedules
+│   ├── mqtt.h / mqtt.cpp             MQTT client, HA discovery, command handling
+│   ├── api.h / api.cpp               REST API endpoints (ESPAsyncWebServer)
+│   ├── webui.h                       Dashboard HTML + OTA upload page (PROGMEM)
+│   ├── pressure.h / pressure.cpp     ADC pressure sensor
+│   ├── display.h / display.cpp       SSD1306 OLED rendering
+│   └── supabase.h / supabase.cpp     Cloud logging via REST
 ```
 
 ---
@@ -58,120 +73,78 @@ sandysoil-8z/
 
 ### 1. Install tools
 
-- [VS Code](https://code.visualstudio.com/)
-- PlatformIO extension (search "PlatformIO IDE" in VS Code extensions)
+1. Install [VS Code](https://code.visualstudio.com/)
+2. Open VS Code and install the **PlatformIO IDE** extension (search "PlatformIO IDE" in the Extensions panel)
+3. Wait for PlatformIO to finish installing its core tools (progress shown in the bottom status bar)
 
-### 2. Open the project
+### 2. Clone and open the project
 
-```
-File → Open Folder → select the sandysoil-8z directory
-```
-
-PlatformIO detects `platformio.ini` automatically.
-
-### 3. Create your local config files
-
-These files are gitignored (contain credentials). Create them in `src/`:
-
-**`src/config.h`**
-```cpp
-#pragma once
-#define FW_VERSION        "1.0.0"
-#define DEVICE_ID         "sandysoil8z"
-#define DEVICE_NAME       "Sandy Soil 8Z"
-
-// I2C pins (KC868-A8v3)
-#define I2C_SDA           8
-#define I2C_SCL           9
-#define PCF8575_ADDR      0x20
-
-// Zone limits
-#define MAX_ZONES         8
-#define MAX_SCHEDULES     4
-#define MAX_RUN_MINUTES   240
-#define DEFAULT_RUN_MIN   10
-
-// Polling intervals (ms)
-#define PRESSURE_INTERVAL_MS   10000   // 10 s
-#define STATUS_INTERVAL_MS     30000   // 30 s
-#define SUPABASE_INTERVAL_MS   60000   // 60 s
-#define SCHEDULE_CHECK_MS       5000   //  5 s
-
-// MQTT topics
-#define MQTT_BASE         "farm/irrigation1"
-#define MQTT_STATUS       MQTT_BASE "/status"
-#define MQTT_ALERT        MQTT_BASE "/alert"
-#define MQTT_ZONE_STATE   MQTT_BASE "/zone/%d/state"
-#define MQTT_ZONE_CMD     MQTT_BASE "/zone/%d/cmd"
-#define MQTT_DISCOVERY    "homeassistant"
+```bash
+git clone https://github.com/mandeepmildura/sandysoil-8z.git
 ```
 
-**`src/secrets.h`**
-```cpp
-#pragma once
-// Wi-Fi
-#define DEFAULT_WIFI_SSID   "YourSSID"
-#define DEFAULT_WIFI_PASS   "YourPassword"
+In VS Code: **File > Open Folder** > select the `sandysoil-8z` directory.
+PlatformIO detects `platformio.ini` automatically and installs dependencies.
 
-// MQTT (HiveMQ Cloud example)
-#define DEFAULT_MQTT_HOST   "xxxx.s1.eu.hivemq.cloud"
-#define DEFAULT_MQTT_PORT   8883
-#define DEFAULT_MQTT_USER   "username"
-#define DEFAULT_MQTT_PASS   "password"
+### 3. Connect the board
 
-// Supabase
-#define DEFAULT_SB_URL      "https://xxxx.supabase.co"
-#define DEFAULT_SB_KEY      "your-anon-key"
+Plug the KC868-A8v3 into your computer via USB. Check which COM port it appears on:
+- **Windows:** Device Manager > Ports (COM & LPT)
+- **Linux/Mac:** `ls /dev/ttyUSB*` or `ls /dev/ttyACM*`
+
+The default in `platformio.ini` is `COM5`. Update `upload_port` if yours differs.
+
+### 4. Build and flash
+
+**Using VS Code toolbar** (bottom of screen):
+- **checkmark** — Build (compile only)
+- **arrow** — Upload (compile + flash)
+- **plug** — Serial Monitor (115200 baud)
+
+**Using terminal:**
+```bash
+pio run --target upload --upload-port COM5
 ```
 
-> **Note:** Credentials saved here are only used on first boot. After that they are stored in device NVS and can be updated via the web config page without re-flashing.
+### 5. First boot
 
-### 4. Install dependencies
-
-PlatformIO downloads all libraries automatically on first build.
-Manual install if needed:
-```
-pio pkg install
-```
-
-### 5. Build and flash (USB cable)
+After flashing, the board starts a WiFi hotspot:
 
 ```
-pio run --target upload
+SSID: FarmControl-Irrigation-Setup
 ```
 
-Or use the **PlatformIO toolbar** at the bottom of VS Code:
-- ✓ (Build) — compile only
-- → (Upload) — compile and flash
-- 🔌 (Serial Monitor) — open serial console at 115200 baud
+1. Connect your phone/laptop to that network
+2. A captive portal opens automatically (or browse to `http://192.168.4.1`)
+3. Enter your WiFi SSID, password, and optionally MQTT broker details
+4. Click **Save & Connect** — the board reboots and joins your network
+
+### 6. Access the dashboard
+
+Find the board's IP in the Serial Monitor output, then open:
+
+```
+http://192.168.x.x/          Dashboard (zone control, pressure, settings)
+http://192.168.x.x/update    Firmware update page
+```
 
 ---
 
-## Wi-Fi Configuration via Web Page
+## WiFi Configuration
 
-### First boot / Wi-Fi failure
+### First boot / WiFi failure
 
-If Wi-Fi credentials are missing or wrong the device starts a hotspot:
+If no WiFi credentials are saved (or connection fails), the device starts a setup hotspot. Connect and configure via the captive portal at `http://192.168.4.1`.
 
-```
-SSID:     SandySoil-Setup
-Password: irrigation
-```
+### Changing WiFi credentials later
 
-1. Connect your phone or laptop to that network
-2. Open **http://192.168.4.1** in a browser
-3. Enter your Wi-Fi SSID and password, plus MQTT broker details
-4. Click **Save & Reboot** — the device restarts and connects
+1. Open the dashboard at `http://<board-ip>/`
+2. Click **Settings**
+3. Update the WiFi SSID and password fields
+4. Click **Save**
+5. Restart the board from the dashboard footer (or power cycle)
 
-### Updating credentials when already connected
-
-Browse to the device's local IP (printed in Serial Monitor on boot):
-
-```
-http://192.168.x.x/config
-```
-
-The config page shows current settings (passwords hidden). Fill in new values and save.
+All settings are stored in NVS (non-volatile storage) and persist across reboots.
 
 ---
 
@@ -179,23 +152,43 @@ The config page shows current settings (passwords hidden). Fill in new values an
 
 ### Option A — Browser upload
 
-1. Browse to **http://192.168.x.x/update**
-2. Build the firmware in VS Code: **PlatformIO → Build**
-3. Find the binary: `.pio/build/sandysoil-8z/firmware.bin`
-4. Upload the file and click **Upload & Flash**
+1. Open `http://<board-ip>/update` in a browser
+2. Build firmware in VS Code: PlatformIO **Build** (checkmark icon)
+3. The binary is at `.pio/build/sandysoil-8z/firmware.bin`
+4. Select the file and click **Upload & Flash**
+5. The board reboots automatically with the new firmware
 
-### Option B — VS Code / PlatformIO direct OTA
+### Option B — VS Code / PlatformIO OTA
 
-1. Find the device IP in the Serial Monitor
+1. Note the device IP from the Serial Monitor
 2. Edit `platformio.ini` — uncomment and set:
    ```ini
    upload_protocol = espota
-   upload_port     = 192.168.x.x   ; ← your device IP
+   upload_port     = 192.168.x.x   ; your device IP
    upload_flags    = --auth=irrigation8z
    ```
-3. Click → (Upload) in VS Code — firmware uploads over Wi-Fi
+3. Click the Upload arrow in VS Code — firmware uploads over WiFi
 
-OTA password: **`irrigation8z`**
+**OTA password:** `irrigation8z`
+
+---
+
+## REST API
+
+All endpoints return JSON with CORS headers.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/status` | Board info, WiFi RSSI, MQTT state, uptime, firmware version |
+| GET | `/api/zones` | All zone states with remaining time |
+| GET | `/api/pressure` | Current supply pressure PSI |
+| GET | `/api/config` | Full configuration (WiFi, MQTT, pressure, Supabase) |
+| POST | `/api/config` | Update configuration (JSON body, partial updates OK) |
+| POST | `/api/zone/{n}/on` | Turn zone on — `{"duration": 10}` (minutes) |
+| POST | `/api/zone/{n}/off` | Turn zone off |
+| POST | `/api/zones/off` | All zones off |
+| POST | `/api/update` | Upload firmware binary (multipart form) |
+| POST | `/api/restart` | Reboot the board |
 
 ---
 
@@ -213,84 +206,74 @@ OTA password: **`irrigation8z`**
 ### Zone command examples
 
 ```json
-// Turn zone 3 on for 20 minutes
-{ "cmd": "on", "duration": 20 }
-
-// Turn off
-{ "cmd": "off" }
-
-// Return to automatic schedule
-{ "cmd": "auto" }
+{"cmd": "on", "duration": 20}
+{"cmd": "off"}
+{"cmd": "auto"}
 ```
 
 Plain string payloads also accepted: `on`, `off`, `auto`.
 
 ---
 
-## Home Assistant Integration
+## Home Assistant
 
-The device publishes MQTT auto-discovery messages on connect.
-In Home Assistant:
-- Each zone appears as a **switch** entity
-- Supply pressure appears as a **pressure sensor** entity
-
-No manual YAML configuration needed — just ensure your MQTT integration is set up and the discovery prefix is `homeassistant`.
+The device publishes MQTT auto-discovery messages on connect. Each zone appears as a **switch** entity and supply pressure appears as a **sensor** entity. No manual YAML needed — just ensure your MQTT integration uses the `homeassistant` discovery prefix.
 
 ---
 
-## Zone State Machine
-
-```
-            ┌─────────┐
-  cmd:on ──▶│ MANUAL  │──── timer expires / cmd:off ──▶┐
-            └─────────┘                                  │
-                                                         ▼
-            ┌──────────┐                            ┌─────────┐
-  schedule ▶│ SCHEDULE │──── duration expires ─────▶│   OFF   │
-            └──────────┘                            └─────────┘
-```
-
-- Manual overrides schedule — schedule resumes when manual off
-- `cmd:auto` cancels manual, returns to schedule mode
-
----
-
-## Architecture Notes
+## Architecture
 
 | Module | Responsibility |
 |--------|---------------|
-| `zones.cpp` | PCF8575 I2C relay driver, zone state, timers, schedule evaluation |
-| `mqtt.cpp` | PubSubClient wrapper, command parsing, HA discovery, state publish |
-| `webui.cpp` | WebServer config page, HTTP OTA upload, ArduinoOTA handler |
-| `storage.cpp` | ESP32 NVS (non-volatile) read/write for all credentials and zone config |
-| `wifi_setup.cpp` | Wi-Fi init, reconnect loop |
-| `pressure.cpp` | ADC read + PSI conversion |
-| `supabase.cpp` | REST POST to Supabase for cloud logging |
-| `display.cpp` | Local display rendering |
-| `.ino` | Main orchestration loop — ties all modules together |
+| `FarmControl_Irrigation.ino` | Main orchestration — setup, loop, timer ticks |
+| `config.h` | Pin definitions, constants, Config/Zone/Schedule structs |
+| `storage.cpp` | NVS read/write for all config and zone names |
+| `wifi_setup.cpp` | WiFi STA connect + AP setup portal (first boot) |
+| `zones.cpp` | PCF8575 I2C relay driver, zone state machine, timers, schedules |
+| `mqtt.cpp` | PubSubClient TLS, command parsing, HA discovery, state publish |
+| `api.cpp` | ESPAsyncWebServer REST endpoints + OTA upload handler |
+| `webui.h` | PROGMEM HTML dashboard + OTA upload page |
+| `pressure.cpp` | ADC multi-sample read + voltage-to-PSI conversion |
+| `display.cpp` | SSD1306 OLED rotating status screens |
+| `supabase.cpp` | HTTPS POST telemetry to Supabase REST API |
+
+### Zone state machine
+
+```
+            ┌─────────┐
+  cmd:on ──>│ MANUAL  │──── timer expires / cmd:off ──>┐
+            └─────────┘                                 │
+                                                        v
+            ┌──────────┐                           ┌─────────┐
+  schedule >│ SCHEDULE │──── duration expires ─────>│   OFF   │
+            └──────────┘                           └─────────┘
+```
+
+Manual overrides schedule. `cmd:auto` cancels manual and returns to schedule mode.
 
 ### Dirty mask
 
-`zones.cpp` maintains a `uint8_t _dirtyMask` (bit per zone). When a timer expires the bit is set. The main loop checks this every iteration, publishes MQTT state for changed zones, then clears the mask. This avoids polling zone state on every MQTT tick.
+`zones.cpp` maintains a `uint8_t _dirtyMask` (one bit per zone). When a timer expires, the corresponding bit is set. The main loop checks this every iteration, publishes MQTT state for changed zones, then clears the mask.
 
 ---
 
 ## Security Notes
 
-- `WiFiClientSecure.setInsecure()` is used for MQTT TLS — certificate pinning should be added for production use
-- OTA and web config are password-protected but served over plain HTTP — only use on a trusted local network
-- `secrets.h` and `config.h` are gitignored; never commit them
+- `WiFiClientSecure.setInsecure()` is used for MQTT TLS — add certificate pinning for production
+- Web UI and OTA are served over plain HTTP — use only on trusted local networks
+- `secrets.h` is gitignored and not committed
+- ArduinoOTA is password-protected (`irrigation8z`)
 
 ---
 
 ## Partition Layout
 
-`default_8MB.csv` (8 MB flash):
+`default_16MB.csv` (16 MB flash):
 
 | Partition | Size | Purpose |
 |-----------|------|---------|
-| nvs | 20 KB | Wi-Fi / MQTT / zone credentials |
+| nvs | 20 KB | WiFi / MQTT / zone config |
 | otadata | 8 KB | OTA boot selection |
-| app0 | ~3.4 MB | Running firmware |
-| app1 | ~3.4 MB | OTA staging |
-| spiffs | ~1 MB | Reserved |
+| app0 | ~6.5 MB | Running firmware |
+| app1 | ~6.5 MB | OTA staging |
+| spiffs | ~3 MB | Reserved |

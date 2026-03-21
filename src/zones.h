@@ -1,23 +1,45 @@
 #pragma once
+
+// ─────────────────────────────────────────────
+//  zones.h
+//  FarmControl Irrigation Controller
+//  8-relay control via PCF8575 I2C expander.
+//  Active-LOW: bit=0 → relay ON, bit=1 → relay OFF
+// ─────────────────────────────────────────────
+
 #include "config.h"
 #include <Wire.h>
 
-// PCF8575 relay control (I2C expander)
-void pcf_init();
-void pcf_relay_set(int relayIdx, bool on);   // relayIdx 0-7
-bool pcf_relay_get(int relayIdx);
-uint16_t pcf_read_all();                      // raw 16-bit port state
+// ── PCF8575 low-level ─────────────────────────
+void     pcfInit();
+void     pcfRelaySet(int relayIdx, bool on);   // relayIdx 0–7
+bool     pcfRelayGet(int relayIdx);
+uint16_t pcfReadAll();
 
-void zones_init(Zone zones[MAX_ZONES]);
-void zones_loop(Zone zones[MAX_ZONES]);
-void zone_on_manual(Zone zones[MAX_ZONES], int idx, uint16_t durationMin);
-void zone_off(Zone zones[MAX_ZONES], int idx);
-void zone_off_all(Zone zones[MAX_ZONES]);
-bool zone_is_on(int idx);
-ZoneState zone_get_state(const Zone& z);
-void schedule_check(Zone zones[MAX_ZONES], int dayOfWeek, int hour, int minute);
+// ── Zone control ──────────────────────────────
+void    zonesInit(Zone zones[MAX_ZONES]);
+void    zonesLoop(Zone zones[MAX_ZONES]);
+void    zoneOnManual(Zone zones[MAX_ZONES], int idx, uint16_t durationMin);
+void    zoneOff(Zone zones[MAX_ZONES], int idx);
+void    zoneOffAll(Zone zones[MAX_ZONES]);
+bool    zoneIsOn(int idx);
+ZoneState zoneGetState(const Zone& z);
 
-// Dirty bitmask — set when a zone changes state unexpectedly (timer expiry, etc.)
-// Main loop reads this and publishes updated MQTT zone state, then clears it.
-uint8_t  zones_get_dirty();
-void     zones_clear_dirty();
+// Schedule
+void scheduleCheck(Zone zones[MAX_ZONES], int dayOfWeek, int hour, int minute);
+
+// Dirty bitmask — set when a zone changes state due to timer expiry
+// Main loop reads and publishes MQTT state, then clears it.
+uint8_t zonesGetDirty();
+void    zonesClearDirty();
+
+// ── Legacy aliases used in main .ino ─────────────────────────
+inline void    zones_init(Zone z[])                        { zonesInit(z); }
+inline void    zones_loop(Zone z[])                        { zonesLoop(z); }
+inline void    zone_on_manual(Zone z[], int i, uint16_t d) { zoneOnManual(z, i, d); }
+inline void    zone_off(Zone z[], int i)                   { zoneOff(z, i); }
+inline void    zone_off_all(Zone z[])                      { zoneOffAll(z); }
+inline bool    zone_is_on(int i)                           { return zoneIsOn(i); }
+inline uint8_t zones_get_dirty()                           { return zonesGetDirty(); }
+inline void    zones_clear_dirty()                         { zonesClearDirty(); }
+inline void    schedule_check(Zone z[], int d, int h, int m){ scheduleCheck(z, d, h, m); }

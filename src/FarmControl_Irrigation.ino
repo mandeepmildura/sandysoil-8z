@@ -2,39 +2,51 @@
  * Sandy Soil 8Z — KC868-A8v3 ESP32-S3
  * 8-zone irrigation controller with schedule + manual control
  * MQTT via HiveMQ Cloud, Supabase cloud logging
+ * Web dashboard + OTA firmware updates
+ *
  * Sandy Soil Automations — Mildura
+ *
+ * First boot: connect to WiFi hotspot "FarmControl-Irrigation-Setup"
+ *             then open http://192.168.4.1 to configure WiFi & MQTT.
+ *
+ * After setup: open http://<board-ip> for dashboard, /update for OTA.
  */
 
 #include "config.h"
-#include "secrets.h"
 #include "storage.h"
 #include "wifi_setup.h"
 #include "zones.h"
 #include "pressure.h"
-#include "mqtt.h"
 #include "display.h"
 #include "supabase.h"
+#include "mqtt.h"
+#include "api.h"
 #include "webui.h"
+#include "ota_github.h"
+#include <ESPAsyncWebServer.h>
+#include <ArduinoOTA.h>
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 
-// ── GLOBALS ───────────────────────────────────────────────────
-Zone     zones[MAX_ZONES];
-float    supplyPsi      = 0.0f;
+// ── GLOBALS ──────────────────────────────────────────────────
+Zone             zones[MAX_ZONES];
+float            supplyPsi    = 0.0f;
+AsyncWebServer   server(80);
 
-// ── NTP for scheduling ────────────────────────────────────────
-WiFiUDP        ntpUDP;
-NTPClient      timeClient(ntpUDP, "pool.ntp.org", 36000); // UTC+10 AEST
-static bool    ntpSynced = false;
+// ── NTP ──────────────────────────────────────────────────────
+WiFiUDP   ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org", 36000);  // UTC+10 AEST
+static bool    ntpSynced          = false;
 static int     lastScheduleMinute = -1;
 
-// ── TIMERS ────────────────────────────────────────────────────
+// ── TIMERS ───────────────────────────────────────────────────
 static uint32_t lastPressure  = 0;
 static uint32_t lastStatus    = 0;
 static uint32_t lastSupabase  = 0;
 static uint32_t lastSchedule  = 0;
 
-#define LOW_PRESSURE_PSI    5.0f
+// ── ArduinoOTA password (used by VS Code / PlatformIO OTA) ──
+#define OTA_PASSWORD   "irrigation8z"
 
 // ─────────────────────────────────────────────────────────────
 void setup() {
@@ -42,121 +54,159 @@ void setup() {
   delay(500);
   Serial.println("\n\n=== Sandy Soil 8Z v" FW_VERSION " ===");
 
-  // Storage
-  storage_init();
+  // 1. Storage
+  storageInit();
 
-  // First-run: save default credentials to NVS
-  char ssid[64], pass[64];
-  storage_load_wifi(ssid, pass);
-  if (strlen(ssid) == 0) {
-    Serial.println("[Setup] First run — saving default credentials");
-    storage_save_wifi(DEFAULT_WIFI_SSID, DEFAULT_WIFI_PASS);
-    storage_save_mqtt(DEFAULT_MQTT_HOST, DEFAULT_MQTT_PORT,
-                      DEFAULT_MQTT_USER, DEFAULT_MQTT_PASS);
-    storage_save_supabase(DEFAULT_SB_URL, DEFAULT_SB_KEY);
-    storage_load_wifi(ssid, pass);
+  // 2. Load or initialise config
+  if (!storageLoadConfig()) {
+    Serial.println("[Setup] No config — starting setup portal");
+    zonesInit(zones);
+    displayInit();
+    displayHotspot();
+    wifiStartSetupPortal();  // blocks until user submits, then reboots
   }
 
-  // Zones + relays FIRST (starts Wire/I2C)
-  storage_load_zones(zones);
-  zones_init(zones);
+  // 3. Zones + relays (starts Wire/I2C)
+  storageLoadZones(zones);
+  zonesInit(zones);
 
-  // Display AFTER zones_init (Wire already started)
-  display_init();
+  // I2C bus scan — find all devices
+  Serial.println("[I2C] Scanning bus (SDA=" + String(I2C_SDA) + " SCL=" + String(I2C_SCL) + ")...");
+  for (uint8_t addr = 1; addr < 127; addr++) {
+    Wire.beginTransmission(addr);
+    uint8_t err = Wire.endTransmission();
+    if (err == 0) {
+      Serial.printf("[I2C] Device found at 0x%02X\n", addr);
+    }
+  }
+  Serial.println("[I2C] Scan complete");
 
-  // Pressure
-  pressure_init();
+  // 4. Display (Wire already up)
+  displayInit();
+  displayBoot("Starting...");
 
-  // WiFi
-  wifi_init(ssid, pass);
+  // 5. Pressure sensor
+  pressureInit();
 
-  // If WiFi failed, start AP hotspot so credentials can be set via browser
-  if (!wifi_connected()) {
-    Serial.println("[Setup] WiFi failed — starting AP for configuration");
-    webui_start_ap();
+  // 6. Connect WiFi
+  displayWiFiConnecting(cfg.wifi_ssid);
+  bool wifiOk = wifiConnect();
+  if (wifiOk) {
+    displayWiFiConnected(wifiGetIP().c_str());
+    delay(800);
+  } else {
+    displayWiFiFailed();
+    delay(2000);
   }
 
-  // Web UI + OTA (serves /config and /update; also starts ArduinoOTA)
-  webui_init();
-
-  // NTP
-  if (wifi_connected()) {
+  // 7. NTP (only if WiFi connected)
+  if (wifiOk) {
     timeClient.begin();
     timeClient.update();
     ntpSynced = true;
-    Serial.printf("[NTP] Time: %s\n", timeClient.getFormattedTime().c_str());
+    Serial.printf("[NTP] %s\n", timeClient.getFormattedTime().c_str());
   }
 
-  // MQTT
-  mqtt_init(zones);
+  // 8. HTTP server — API + Web UI + OTA page
+  displayBoot("HTTP...");
+  apiInit(server, zones);
+  webuiInit(server);
+  server.begin();
+  Serial.printf("[HTTP] Dashboard at http://%s\n", wifiGetIP().c_str());
+  Serial.printf("[HTTP] OTA update at http://%s/update\n", wifiGetIP().c_str());
 
-  // Supabase
-  supabase_init();
+  // 9. ArduinoOTA — VS Code / PlatformIO over-the-air upload
+  ArduinoOTA.setHostname("sandysoil-8z");
+  ArduinoOTA.setPassword(OTA_PASSWORD);
+  ArduinoOTA.onStart([]() {
+    Serial.println("[OTA] Start — do not power off");
+  });
+  ArduinoOTA.onEnd([]() {
+    Serial.println("[OTA] Done");
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("[OTA] %u%%\r", progress * 100 / total);
+  });
+  ArduinoOTA.onError([](ota_error_t e) {
+    Serial.printf("[OTA] Error[%u]\n", e);
+  });
+  ArduinoOTA.begin();
+  Serial.println("[OTA] ArduinoOTA ready (password: " OTA_PASSWORD ")");
+
+  // 10. MQTT
+  displayBoot("MQTT...");
+  mqttInit(zones);
+
+  // 11. Supabase
+  supabaseInit();
 
   Serial.println("[Setup] Ready\n");
+  displayBoot("Ready");
+  delay(800);
 }
 
 // ─────────────────────────────────────────────────────────────
 void loop() {
   uint32_t now = millis();
 
-  wifi_loop();
-  webui_loop();       // handle HTTP config + OTA requests
-  mqtt_loop(zones);
-  zones_loop(zones);
+  wifiMaintain();
+  ArduinoOTA.handle();
+  otaRunPending();
+  mqttLoop(zones);
+  zonesLoop(zones);
 
-  // Publish MQTT state for any zones that auto-turned off (timer expiry)
-  uint8_t dirty = zones_get_dirty();
+  // Publish MQTT state for zones that auto-turned off (timer expiry)
+  uint8_t dirty = zonesGetDirty();
   if (dirty) {
-    zones_clear_dirty();
+    zonesClearDirty();
     for (int i = 0; i < MAX_ZONES; i++) {
-      if (dirty & (1 << i)) mqtt_publish_zone(i, zones[i]);
+      if (dirty & (1 << i)) mqttPublishZone(i, zones[i]);
     }
   }
 
-  // ── PRESSURE ──────────────────────────────────────────────
+  // ── PRESSURE ─────────────────────────────────────────────
   if (now - lastPressure >= PRESSURE_INTERVAL_MS) {
     lastPressure = now;
-    supplyPsi = pressure_get_supply_psi();
-    Serial.printf("[Pressure] Supply: %.1f PSI\n", supplyPsi);
+    supplyPsi    = pressureGetSupplyPsi();
 
     bool anyOn = false;
-    for (int i = 0; i < MAX_ZONES; i++) if (zone_is_on(i)) { anyOn = true; break; }
-    if (anyOn && pressure_is_low(supplyPsi, LOW_PRESSURE_PSI)) {
+    for (int i = 0; i < MAX_ZONES; i++) if (zoneIsOn(i)) { anyOn = true; break; }
+    if (anyOn && pressureIsLow(supplyPsi, cfg.low_pressure_psi)) {
       char msg[64];
       snprintf(msg, sizeof(msg), "Low supply pressure: %.1f PSI", supplyPsi);
-      mqtt_publish_alert(msg);
+      mqttPublishAlert(msg);
     }
   }
 
-  // ── STATUS PUBLISH ────────────────────────────────────────
+  // ── STATUS PUBLISH ───────────────────────────────────────
   if (now - lastStatus >= STATUS_INTERVAL_MS) {
     lastStatus = now;
-    mqtt_publish_status(zones, supplyPsi);
+    mqttPublishStatus(zones, supplyPsi);
   }
 
-  // ── SUPABASE LOG ──────────────────────────────────────────
+  // ── SUPABASE LOG ─────────────────────────────────────────
   if (now - lastSupabase >= SUPABASE_INTERVAL_MS) {
     lastSupabase = now;
-    if (wifi_connected()) supabase_log(supplyPsi, zones);
+    if (wifiIsConnected()) supabaseLog(supplyPsi, zones);
   }
 
-  // ── SCHEDULE CHECK ────────────────────────────────────────
+  // ── SCHEDULE CHECK ───────────────────────────────────────
   if (now - lastSchedule >= SCHEDULE_CHECK_MS) {
     lastSchedule = now;
-    if (ntpSynced && wifi_connected()) {
+    if (ntpSynced && wifiIsConnected()) {
       timeClient.update();
       int h   = timeClient.getHours();
       int m   = timeClient.getMinutes();
       int dow = timeClient.getDay();
-
       if (m != lastScheduleMinute) {
         lastScheduleMinute = m;
-        schedule_check(zones, dow, h, m);
+        scheduleCheck(zones, dow, h, m);
       }
     }
   }
 
-  // ── DISPLAY ───────────────────────────────────────────────
-  display_loop(zones, supplyPsi, mqtt_connected(), wifi_connected());
+  // ── DISPLAY ──────────────────────────────────────────────
+  displayLoop(zones, supplyPsi, mqttIsConnected(), wifiIsConnected());
+
+  delay(10);
 }
