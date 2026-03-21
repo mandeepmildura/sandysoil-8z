@@ -417,7 +417,7 @@ MQTT follows the same flow — `cmd/ota` with `{"action":"update"}` calls `otaCh
 |------|-------------|
 | [sandysoil-8z](https://github.com/mandeepmildura/sandysoil-8z) | **This repo** — KC868-A8v3 irrigation controller (8 zones) |
 | [farmcontrol-filter](https://github.com/mandeepmildura/farmcontrol-filter) | ALR-V13 filtration controller (auto-backwash) |
-| [farmcontrol-app](https://github.com/mandeepmildura/farmcontrol-app) | Web dashboard + MQTT-Supabase bridge (Vercel/Railway) |
+| [farmcontrol-app](https://github.com/mandeepmildura/farmcontrol-app) | Web dashboard + MQTT-Supabase bridge (Cloudflare/Railway) |
 
 ---
 
