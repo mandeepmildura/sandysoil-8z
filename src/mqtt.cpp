@@ -161,6 +161,7 @@ void mqttPublishStatus(Zone zones[MAX_ZONES], float supplyPsi) {
   doc["supply_psi"] = supplyPsi;
   doc["uptime"]     = millis() / 1000;
   doc["rssi"]       = WiFi.RSSI();
+  doc["ip"]         = WiFi.localIP().toString();
   JsonArray arr = doc.createNestedArray("zones");
   for (int i = 0; i < MAX_ZONES; i++) {
     JsonObject z = arr.createNestedObject();
