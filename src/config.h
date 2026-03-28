@@ -28,7 +28,7 @@
 #define OLED_HEIGHT         64
 
 // ── FIRMWARE ──────────────────────────────────
-#define FW_VERSION          "2.3.1"
+#define FW_VERSION          "2.3.2"
 
 // ── GITHUB OTA ────────────────────────────────
 #define GITHUB_OWNER        "mandeepmildura"
@@ -91,7 +91,7 @@ struct Schedule {
 };
 
 // ── ZONE STATE ────────────────────────────────
-enum ZoneState { ZONE_OFF, ZONE_MANUAL, ZONE_SCHEDULE };
+enum ZoneState { ZONE_OFF, ZONE_MANUAL, ZONE_SCHEDULE, ZONE_PROGRAM };
 
 // ── ZONE STRUCT ───────────────────────────────
 struct Zone {
@@ -103,11 +103,15 @@ struct Zone {
   bool     scheduleActive     = false;
   uint32_t scheduleOnAt       = 0;
   uint16_t scheduleDurMin     = 0;
+  bool     programOn          = false;
+  uint32_t programOnAt        = 0;
+  uint16_t programDurMin      = 0;
   Schedule schedules[MAX_SCHEDULES];
 };
 
 inline ZoneState getZoneState(const Zone& z) {
   if (z.manualOn)       return ZONE_MANUAL;
+  if (z.programOn)      return ZONE_PROGRAM;
   if (z.scheduleActive) return ZONE_SCHEDULE;
   return ZONE_OFF;
 }

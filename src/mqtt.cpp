@@ -30,7 +30,12 @@ static void onMessage(char* topic, byte* payload, unsigned int length) {
       int dur = doc["duration"] | DEFAULT_RUN_MIN;
 
       if (strcmp(cmd, "on") == 0 || strcmp(cmd, "ON") == 0) {
-        zoneOnManual(_zones, i, dur);
+        const char* src = doc["source"] | "manual";
+        if (strcmp(src, "program") == 0 || strcmp(src, "schedule") == 0) {
+          zoneOnProgram(_zones, i, dur);
+        } else {
+          zoneOnManual(_zones, i, dur);
+        }
         mqttPublishZone(i, _zones[i]);
       } else if (strcmp(cmd, "off") == 0 || strcmp(cmd, "OFF") == 0) {
         zoneOff(_zones, i);
@@ -169,7 +174,8 @@ void mqttPublishStatus(Zone zones[MAX_ZONES], float supplyPsi) {
     z["name"] = zones[i].name;
     z["on"]   = zoneIsOn(i);
     ZoneState st = getZoneState(zones[i]);
-    z["state"] = (st == ZONE_MANUAL) ? "manual" :
+    z["state"] = (st == ZONE_MANUAL)   ? "manual"   :
+                 (st == ZONE_PROGRAM)  ? "program"  :
                  (st == ZONE_SCHEDULE) ? "schedule" : "off";
   }
   char buf[1024];

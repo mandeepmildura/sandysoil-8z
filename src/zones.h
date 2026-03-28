@@ -20,6 +20,7 @@ uint16_t pcfReadAll();
 void    zonesInit(Zone zones[MAX_ZONES]);
 void    zonesLoop(Zone zones[MAX_ZONES]);
 void    zoneOnManual(Zone zones[MAX_ZONES], int idx, uint16_t durationMin);
+void    zoneOnProgram(Zone zones[MAX_ZONES], int idx, uint16_t durationMin);
 void    zoneOff(Zone zones[MAX_ZONES], int idx);
 void    zoneOffAll(Zone zones[MAX_ZONES]);
 bool    zoneIsOn(int idx);
@@ -37,6 +38,7 @@ void    zonesClearDirty();
 inline void    zones_init(Zone z[])                        { zonesInit(z); }
 inline void    zones_loop(Zone z[])                        { zonesLoop(z); }
 inline void    zone_on_manual(Zone z[], int i, uint16_t d) { zoneOnManual(z, i, d); }
+inline void    zone_on_program(Zone z[], int i, uint16_t d){ zoneOnProgram(z, i, d); }
 inline void    zone_off(Zone z[], int i)                   { zoneOff(z, i); }
 inline void    zone_off_all(Zone z[])                      { zoneOffAll(z); }
 inline bool    zone_is_on(int i)                           { return zoneIsOn(i); }

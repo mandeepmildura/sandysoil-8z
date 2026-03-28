@@ -71,11 +71,18 @@ void zonesLoop(Zone zones[MAX_ZONES]) {
         _dirtyMask |= (1 << i);
       }
     }
+    if (zones[i].programOn && zones[i].programDurMin > 0) {
+      if (now - zones[i].programOnAt >= (uint32_t)zones[i].programDurMin * 60000UL) {
+        Serial.printf("[Zones] Zone %d program timeout\n", i + 1);
+        zoneOff(zones, i);
+        _dirtyMask |= (1 << i);
+      }
+    }
     if (zones[i].scheduleActive) {
       if (now - zones[i].scheduleOnAt >= (uint32_t)zones[i].scheduleDurMin * 60000UL) {
         Serial.printf("[Zones] Zone %d schedule complete\n", i + 1);
         zones[i].scheduleActive = false;
-        if (!zones[i].manualOn) {
+        if (!zones[i].manualOn && !zones[i].programOn) {
           pcfRelaySet(i, false);
           _dirtyMask |= (1 << i);
         }
@@ -98,9 +105,24 @@ void zoneOnManual(Zone zones[MAX_ZONES], int idx, uint16_t durationMin) {
   Serial.printf("[Zones] Zone %d ON manual — %d min\n", idx + 1, durationMin);
 }
 
+void zoneOnProgram(Zone zones[MAX_ZONES], int idx, uint16_t durationMin) {
+  if (idx < 0 || idx >= MAX_ZONES) return;
+  if (!zones[idx].enabled) {
+    Serial.printf("[Zones] Zone %d disabled\n", idx + 1);
+    return;
+  }
+  if (durationMin > MAX_RUN_MINUTES) durationMin = MAX_RUN_MINUTES;
+  zones[idx].programOn     = true;
+  zones[idx].programOnAt   = millis();
+  zones[idx].programDurMin = durationMin;
+  pcfRelaySet(idx, true);
+  Serial.printf("[Zones] Zone %d ON program — %d min\n", idx + 1, durationMin);
+}
+
 void zoneOff(Zone zones[MAX_ZONES], int idx) {
   if (idx < 0 || idx >= MAX_ZONES) return;
   zones[idx].manualOn       = false;
+  zones[idx].programOn      = false;
   zones[idx].scheduleActive = false;
   pcfRelaySet(idx, false);
   Serial.printf("[Zones] Zone %d OFF\n", idx + 1);
