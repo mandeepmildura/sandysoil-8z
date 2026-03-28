@@ -40,10 +40,13 @@ static bool    ntpSynced          = false;
 static int     lastScheduleMinute = -1;
 
 // ── TIMERS ───────────────────────────────────────────────────
-static uint32_t lastPressure  = 0;
-static uint32_t lastStatus    = 0;
-static uint32_t lastSupabase  = 0;
-static uint32_t lastSchedule  = 0;
+static uint32_t lastPressure      = 0;
+static uint32_t lastStatus        = 0;
+static uint32_t lastSupabase      = 0;
+static uint32_t lastSchedule      = 0;
+static uint32_t lastPressureAlert = 0;
+static bool     pressureWasLow    = false;
+#define PRESSURE_ALERT_COOLDOWN_MS  (10UL * 60UL * 1000UL)  // 10 min
 
 // ── ArduinoOTA password (used by VS Code / PlatformIO OTA) ──
 #define OTA_PASSWORD   "irrigation8z"
@@ -184,11 +187,16 @@ void loop() {
 
     bool anyOn = false;
     for (int i = 0; i < MAX_ZONES; i++) if (zoneIsOn(i)) { anyOn = true; break; }
-    if (anyOn && pressureIsLow(supplyPsi, cfg.low_pressure_psi)) {
+    bool pressureIsNowLow = anyOn && cfg.low_pressure_psi > 0.0f
+                            && pressureIsLow(supplyPsi, cfg.low_pressure_psi);
+    // Alert on transition to low OR after cooldown if still low — never spam
+    if (pressureIsNowLow && (!pressureWasLow || (now - lastPressureAlert >= PRESSURE_ALERT_COOLDOWN_MS))) {
       char msg[64];
       snprintf(msg, sizeof(msg), "Low supply pressure: %.1f PSI", supplyPsi);
       mqttPublishAlert(msg);
+      lastPressureAlert = now;
     }
+    pressureWasLow = pressureIsNowLow;
   }
 
   // ── STATUS PUBLISH ───────────────────────────────────────
