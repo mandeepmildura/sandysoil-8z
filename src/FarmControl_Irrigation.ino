@@ -25,17 +25,13 @@
 #include "ota_github.h"
 #include <ESPAsyncWebServer.h>
 #include <ArduinoOTA.h>
-#include <NTPClient.h>
-#include <WiFiUdp.h>
 
 // ── GLOBALS ──────────────────────────────────────────────────
 Zone             zones[MAX_ZONES];
 float            supplyPsi    = 0.0f;
 AsyncWebServer   server(80);
 
-// ── NTP ──────────────────────────────────────────────────────
-WiFiUDP   ntpUDP;
-NTPClient timeClient(ntpUDP, "pool.ntp.org", 36000);  // UTC+10 AEST
+// ── TIME ─────────────────────────────────────────────────────
 static bool    ntpSynced          = false;
 static int     lastScheduleMinute = -1;
 
@@ -102,12 +98,19 @@ void setup() {
     delay(2000);
   }
 
-  // 7. NTP (only if WiFi connected)
+  // 7. Time — ESP32 built-in TZ-aware SNTP (handles AEDT/AEST DST automatically)
   if (wifiOk) {
-    timeClient.begin();
-    timeClient.update();
-    ntpSynced = true;
-    Serial.printf("[NTP] %s\n", timeClient.getFormattedTime().c_str());
+    configTzTime("AEST-10AEDT,M10.1.0,M4.1.0/3",
+                 "pool.ntp.org", "time.google.com", "time.cloudflare.com");
+    struct tm tmNow;
+    if (getLocalTime(&tmNow, 10000)) {
+      char buf[40];
+      strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S %Z", &tmNow);
+      Serial.printf("[NTP] %s\n", buf);
+      ntpSynced = true;
+    } else {
+      Serial.println("[NTP] initial sync failed — scheduler will retry");
+    }
   }
 
   // 8. HTTP server — API + Web UI + OTA page
@@ -142,6 +145,7 @@ void setup() {
 
   // 11. Supabase
   supabaseInit();
+  if (wifiOk) supabaseSyncSchedules(zones);
 
   // 12. Auto-check for firmware update on boot
   if (wifiOk) {
@@ -211,14 +215,22 @@ void loop() {
     if (wifiIsConnected()) supabaseLog(supplyPsi, zones);
   }
 
+  // ── SCHEDULE SYNC FROM SUPABASE ─────────────────────────
+  static uint32_t lastScheduleSync = 0;
+  if (now - lastScheduleSync >= SCHEDULE_SYNC_MS) {
+    lastScheduleSync = now;
+    if (wifiIsConnected()) supabaseSyncSchedules(zones);
+  }
+
   // ── SCHEDULE CHECK ───────────────────────────────────────
   if (now - lastSchedule >= SCHEDULE_CHECK_MS) {
     lastSchedule = now;
-    if (ntpSynced && wifiIsConnected()) {
-      timeClient.update();
-      int h   = timeClient.getHours();
-      int m   = timeClient.getMinutes();
-      int dow = timeClient.getDay();
+    struct tm tmNow;
+    if (getLocalTime(&tmNow, 100)) {
+      ntpSynced = true;
+      int h   = tmNow.tm_hour;
+      int m   = tmNow.tm_min;
+      int dow = tmNow.tm_wday;   // 0=Sun — matches daysOfWeek bitmask
       if (m != lastScheduleMinute) {
         lastScheduleMinute = m;
         scheduleCheck(zones, dow, h, m);
