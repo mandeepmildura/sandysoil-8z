@@ -1,0 +1,39 @@
+name: Build & Release Firmware
+on:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
+          restore-keys: ${{ runner.os }}-pio-
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install platformio
+      - run: pio run -e sandysoil-8z
+      - id: version
+        run: |
+          VER=$(grep 'define FW_VERSION' src/config.h | grep -oP '"\K[^"]+')
+          echo "version=$VER" >> $GITHUB_OUTPUT
+          echo "tag=v$VER" >> $GITHUB_OUTPUT
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete v${{ steps.version.outputs.version }} --yes 2>/dev/null || true
+          git push origin :refs/tags/v${{ steps.version.outputs.version }} 2>/dev/null || true
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create v${{ steps.version.outputs.version }} \
+            .pio/build/sandysoil-8z/firmware.bin \
+            --title "Firmware ${{ steps.version.outputs.version }}" \
+            --notes "Auto-built from commit ${{ github.sha }}" \
+            --latest
