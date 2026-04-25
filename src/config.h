@@ -28,6 +28,7 @@
 #define OLED_HEIGHT         64
 
 // ── FIRMWARE ──────────────────────────────────
+#define FW_VERSION          "2.4.0"
 #define FW_VERSION          "2.4.1"
 
 // ── GITHUB OTA ────────────────────────────────
@@ -64,6 +65,7 @@
 #define STATUS_INTERVAL_MS      30000
 #define SUPABASE_INTERVAL_MS    60000
 #define SCHEDULE_CHECK_MS       10000
+#define SCHEDULE_SYNC_MS        300000   // Pull schedules from Supabase every 5 min
 
 // ── PRESSURE SENSOR ───────────────────────────
 #define ADC_MAX             4095.0
