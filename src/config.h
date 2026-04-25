@@ -28,7 +28,6 @@
 #define OLED_HEIGHT         64
 
 // ── FIRMWARE ──────────────────────────────────
-#define FW_VERSION          "2.4.0"
 #define FW_VERSION          "2.4.1"
 
 // ── GITHUB OTA ────────────────────────────────
