@@ -74,7 +74,15 @@ bool storageLoadConfig() {
   cfg.mqtt_port              = prefs.getInt   ("mqtt_port",  8883);
   strlcpy(cfg.mqtt_user,       prefs.getString("mqtt_user",  "").c_str(),               sizeof(cfg.mqtt_user));
   strlcpy(cfg.mqtt_password,   prefs.getString("mqtt_pass",  "").c_str(),               sizeof(cfg.mqtt_password));
-  strlcpy(cfg.mqtt_base_topic, prefs.getString("mqtt_topic", "farm/irrigation1").c_str(), sizeof(cfg.mqtt_base_topic));
+  // Default base topic = `farm/<chip-id>` for fresh units. Existing units
+  // keep whatever NVS already holds (legacy `farm/irrigation1` or whatever
+  // the operator set in the web UI).
+  {
+    char defTopic[64];
+    uint64_t mac = ESP.getEfuseMac();
+    snprintf(defTopic, sizeof(defTopic), "farm/%012llx", (unsigned long long)mac);
+    strlcpy(cfg.mqtt_base_topic, prefs.getString("mqtt_topic", defTopic).c_str(), sizeof(cfg.mqtt_base_topic));
+  }
 
   strlcpy(cfg.board_name,      prefs.getString("board_name", "Irrigation Controller").c_str(), sizeof(cfg.board_name));
 
