@@ -13,6 +13,26 @@ static Zone*            _zones = nullptr;
 static uint32_t _lastReconnect       = 0;
 static bool     _discoveryPublished  = false;
 
+// ── Topic helpers — build at runtime from cfg.mqtt_base_topic ───
+// Returns the chip's unique 12-hex MAC as a lowercase string. Used
+// in the published status payload as `device_id` so the dashboard
+// can auto-create an "unclaimed device" record.
+static String chipSerial() {
+  char buf[13];
+  uint64_t mac = ESP.getEfuseMac();
+  snprintf(buf, sizeof(buf), "%012llx", (unsigned long long)mac);
+  return String(buf);
+}
+static inline String mqttBase()              { return String(cfg.mqtt_base_topic); }
+static inline String mqttStatusTopic()       { return mqttBase() + "/status"; }
+static inline String mqttAlertTopic()        { return mqttBase() + "/alert"; }
+static inline String mqttAllOffTopic()       { return mqttBase() + "/all/off"; }
+static inline String mqttSyncTopic()         { return mqttBase() + "/cmd/sync"; }
+static inline String mqttOtaCmdTopic()       { return mqttBase() + "/cmd/ota"; }
+static inline String mqttOtaStatusTopic()    { return mqttBase() + "/ota/status"; }
+static inline String mqttZoneStateTopic(int n) { return mqttBase() + "/zone/" + String(n) + "/state"; }
+static inline String mqttZoneCmdTopic(int n)   { return mqttBase() + "/zone/" + String(n) + "/cmd"; }
+
 // ── INCOMING MESSAGE HANDLER ─────────────────────────────────
 static void onMessage(char* topic, byte* payload, unsigned int length) {
   char msg[256] = {0};
@@ -20,10 +40,9 @@ static void onMessage(char* topic, byte* payload, unsigned int length) {
   Serial.printf("[MQTT] <- %s: %s\n", topic, msg);
 
   // Zone command: ../zone/N/cmd
-  char cmdTopic[64];
   for (int i = 0; i < MAX_ZONES; i++) {
-    snprintf(cmdTopic, sizeof(cmdTopic), MQTT_ZONE_CMD, i + 1);
-    if (strcmp(topic, cmdTopic) == 0) {
+    String cmdTopic = mqttZoneCmdTopic(i + 1);
+    if (strcmp(topic, cmdTopic.c_str()) == 0) {
       StaticJsonDocument<128> doc;
       deserializeJson(doc, msg);
       const char* cmd = doc["cmd"] | msg;
@@ -49,13 +68,13 @@ static void onMessage(char* topic, byte* payload, unsigned int length) {
   }
 
   // All off
-  if (strcmp(topic, MQTT_BASE "/all/off") == 0) {
+  if (strcmp(topic, mqttAllOffTopic().c_str()) == 0) {
     zoneOffAll(_zones);
     return;
   }
 
   // Sync request
-  if (strcmp(topic, MQTT_BASE "/cmd/sync") == 0) {
+  if (strcmp(topic, mqttSyncTopic().c_str()) == 0) {
     Serial.println("[MQTT] Sync requested");
     mqttPublishStatus(_zones, 0);
     for (int i = 0; i < MAX_ZONES; i++) mqttPublishZone(i, _zones[i]);
@@ -63,7 +82,7 @@ static void onMessage(char* topic, byte* payload, unsigned int length) {
   }
 
   // OTA command: .../cmd/ota
-  if (strcmp(topic, MQTT_BASE "/cmd/ota") == 0) {
+  if (strcmp(topic, mqttOtaCmdTopic().c_str()) == 0) {
     StaticJsonDocument<256> doc;
     deserializeJson(doc, msg);
     const char* action = doc["action"] | "update";
@@ -76,7 +95,7 @@ static void onMessage(char* topic, byte* payload, unsigned int length) {
       snprintf(resp, sizeof(resp),
         "{\"update_available\":%s,\"current\":\"%s\",\"latest\":\"%s\"}",
         avail ? "true" : "false", FW_VERSION, newVer.c_str());
-      _mqtt.publish(MQTT_BASE "/ota/status", resp);
+      _mqtt.publish(mqttOtaStatusTopic().c_str(), resp);
     } else if (strcmp(action, "update") == 0) {
       Serial.println("[MQTT] OTA update requested via MQTT");
       String newVer, dlUrl;
@@ -84,10 +103,10 @@ static void onMessage(char* topic, byte* payload, unsigned int length) {
         char resp[128];
         snprintf(resp, sizeof(resp),
           "{\"status\":\"downloading\",\"version\":\"%s\"}", newVer.c_str());
-        _mqtt.publish(MQTT_BASE "/ota/status", resp);
+        _mqtt.publish(mqttOtaStatusTopic().c_str(), resp);
         otaSetPending(dlUrl);
       } else {
-        _mqtt.publish(MQTT_BASE "/ota/status",
+        _mqtt.publish(mqttOtaStatusTopic().c_str(),
           "{\"status\":\"up_to_date\",\"version\":\"" FW_VERSION "\"}");
       }
     }
@@ -109,17 +128,15 @@ static void reconnect() {
            (uint16_t)(ESP.getEfuseMac() & 0xFFFF));
 
   if (_mqtt.connect(clientId, cfg.mqtt_user, cfg.mqtt_password,
-                    MQTT_STATUS, 0, true, "{\"online\":false}")) {
-    Serial.println("[MQTT] Connected");
+                    mqttStatusTopic().c_str(), 0, true, "{\"online\":false}")) {
+    Serial.printf("[MQTT] Connected — base topic: %s\n", cfg.mqtt_base_topic);
 
-    char sub[64];
     for (int i = 1; i <= MAX_ZONES; i++) {
-      snprintf(sub, sizeof(sub), MQTT_ZONE_CMD, i);
-      _mqtt.subscribe(sub);
+      _mqtt.subscribe(mqttZoneCmdTopic(i).c_str());
     }
-    _mqtt.subscribe(MQTT_BASE "/all/off");
-    _mqtt.subscribe(MQTT_BASE "/cmd/sync");
-    _mqtt.subscribe(MQTT_BASE "/cmd/ota");
+    _mqtt.subscribe(mqttAllOffTopic().c_str());
+    _mqtt.subscribe(mqttSyncTopic().c_str());
+    _mqtt.subscribe(mqttOtaCmdTopic().c_str());
 
     mqttPublishStatus(_zones, 0);
     for (int i = 0; i < MAX_ZONES; i++) mqttPublishZone(i, _zones[i]);
@@ -161,6 +178,8 @@ void mqttPublishStatus(Zone zones[MAX_ZONES], float supplyPsi) {
   if (!_mqtt.connected()) return;
   StaticJsonDocument<1024> doc;
   doc["device"]     = DEVICE_ID;
+  doc["device_id"]  = chipSerial();   // unique per ESP32 chip — used by dashboard for unclaimed-device discovery
+  doc["base_topic"] = cfg.mqtt_base_topic;
   doc["fw"]         = FW_VERSION;
   doc["online"]     = true;
   doc["supply_psi"] = supplyPsi;
@@ -180,13 +199,12 @@ void mqttPublishStatus(Zone zones[MAX_ZONES], float supplyPsi) {
   }
   char buf[1024];
   serializeJson(doc, buf);
-  _mqtt.publish(MQTT_STATUS, buf, true);
+  _mqtt.publish(mqttStatusTopic().c_str(), buf, true);
 }
 
 void mqttPublishZone(int idx, const Zone& z) {
   if (!_mqtt.connected()) return;
-  char topic[64];
-  snprintf(topic, sizeof(topic), MQTT_ZONE_STATE, idx + 1);
+  String topic = mqttZoneStateTopic(idx + 1);
   StaticJsonDocument<128> doc;
   doc["zone"]  = idx + 1;
   doc["name"]  = z.name;
@@ -196,7 +214,7 @@ void mqttPublishZone(int idx, const Zone& z) {
                  (st == ZONE_SCHEDULE) ? "schedule" : "off";
   char buf[128];
   serializeJson(doc, buf);
-  _mqtt.publish(topic, buf, true);
+  _mqtt.publish(topic.c_str(), buf, true);
 }
 
 void mqttPublishAlert(const char* message) {
@@ -206,7 +224,7 @@ void mqttPublishAlert(const char* message) {
   doc["ts"]    = millis() / 1000;
   char buf[128];
   serializeJson(doc, buf);
-  _mqtt.publish(MQTT_ALERT, buf);
+  _mqtt.publish(mqttAlertTopic().c_str(), buf);
   Serial.printf("[MQTT] Alert: %s\n", message);
 }
 
@@ -222,8 +240,8 @@ void mqttPublishDiscovery(Zone zones[MAX_ZONES]) {
     StaticJsonDocument<768> doc;
     char uid[32];   snprintf(uid,   sizeof(uid),   "%s_zone%d",   DEVICE_ID, i + 1);
     char name[32];  snprintf(name,  sizeof(name),  "%s Zone %d",  DEVICE_NAME, i + 1);
-    char stTopic[64]; snprintf(stTopic, sizeof(stTopic), MQTT_ZONE_STATE, i + 1);
-    char cmdTopic[64]; snprintf(cmdTopic, sizeof(cmdTopic), MQTT_ZONE_CMD, i + 1);
+    String stTopic  = mqttZoneStateTopic(i + 1);
+    String cmdTopic = mqttZoneCmdTopic(i + 1);
 
     doc["name"]           = name;
     doc["unique_id"]      = uid;
@@ -233,7 +251,7 @@ void mqttPublishDiscovery(Zone zones[MAX_ZONES]) {
     doc["payload_on"]     = "{\"cmd\":\"on\",\"duration\":10}";
     doc["payload_off"]    = "{\"cmd\":\"off\"}";
     doc["icon"]           = "mdi:water";
-    doc["availability_topic"] = MQTT_STATUS;
+    doc["availability_topic"] = mqttStatusTopic();
     doc["availability_template"] = "{{ 'online' if value_json.online else 'offline' }}";
     JsonObject dev = doc.createNestedObject("device");
     dev["identifiers"]  = DEVICE_ID;
@@ -252,13 +270,13 @@ void mqttPublishDiscovery(Zone zones[MAX_ZONES]) {
     StaticJsonDocument<768> doc;
     doc["name"]               = DEVICE_NAME " Supply PSI";
     doc["unique_id"]          = DEVICE_ID "_supply_psi";
-    doc["state_topic"]        = MQTT_STATUS;
+    doc["state_topic"]        = mqttStatusTopic();
     doc["value_template"]     = "{{ value_json.supply_psi }}";
     doc["unit_of_measurement"]= "PSI";
     doc["device_class"]       = "pressure";
     doc["state_class"]        = "measurement";
     doc["icon"]               = "mdi:gauge";
-    doc["availability_topic"] = MQTT_STATUS;
+    doc["availability_topic"] = mqttStatusTopic();
     doc["availability_template"] = "{{ 'online' if value_json.online else 'offline' }}";
     JsonObject dev = doc.createNestedObject("device");
     dev["identifiers"]  = DEVICE_ID;
@@ -277,11 +295,11 @@ void mqttPublishDiscovery(Zone zones[MAX_ZONES]) {
     StaticJsonDocument<768> doc;
     doc["name"]           = DEVICE_NAME " Firmware";
     doc["unique_id"]      = DEVICE_ID "_firmware";
-    doc["state_topic"]    = MQTT_STATUS;
+    doc["state_topic"]    = mqttStatusTopic();
     doc["value_template"] = "{{ value_json.fw }}";
     doc["icon"]           = "mdi:chip";
     doc["entity_category"]= "diagnostic";
-    doc["availability_topic"] = MQTT_STATUS;
+    doc["availability_topic"] = mqttStatusTopic();
     doc["availability_template"] = "{{ 'online' if value_json.online else 'offline' }}";
     JsonObject dev = doc.createNestedObject("device");
     dev["identifiers"]  = DEVICE_ID;
@@ -300,14 +318,14 @@ void mqttPublishDiscovery(Zone zones[MAX_ZONES]) {
     StaticJsonDocument<768> doc;
     doc["name"]               = DEVICE_NAME " WiFi RSSI";
     doc["unique_id"]          = DEVICE_ID "_rssi";
-    doc["state_topic"]        = MQTT_STATUS;
+    doc["state_topic"]        = mqttStatusTopic();
     doc["value_template"]     = "{{ value_json.rssi }}";
     doc["unit_of_measurement"]= "dBm";
     doc["device_class"]       = "signal_strength";
     doc["state_class"]        = "measurement";
     doc["icon"]               = "mdi:wifi";
     doc["entity_category"]    = "diagnostic";
-    doc["availability_topic"] = MQTT_STATUS;
+    doc["availability_topic"] = mqttStatusTopic();
     doc["availability_template"] = "{{ 'online' if value_json.online else 'offline' }}";
     JsonObject dev = doc.createNestedObject("device");
     dev["identifiers"]  = DEVICE_ID;

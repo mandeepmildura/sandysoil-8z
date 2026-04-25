@@ -29,20 +29,22 @@
 
 // ── FIRMWARE ──────────────────────────────────
 #define FW_VERSION          "2.4.0"
+#define FW_VERSION          "2.4.1"
 
 // ── GITHUB OTA ────────────────────────────────
 #define GITHUB_OWNER        "mandeepmildura"
 #define GITHUB_REPO         "sandysoil-8z"
 #define GITHUB_FW_ASSET     "firmware.bin"
+// Legacy device_id used for HA discovery on units that haven't yet
+// been re-pointed to a chip-serial topic. New shipments default to
+// `farm/<chip-id>` (see storage.cpp first-boot defaults).
 #define DEVICE_ID           "irrigation1"
 #define DEVICE_NAME         "Irrigation Controller"
 
 // ── MQTT TOPICS ───────────────────────────────
-#define MQTT_BASE           "farm/irrigation1"
-#define MQTT_STATUS         MQTT_BASE "/status"
-#define MQTT_ALERT          MQTT_BASE "/alert"
-#define MQTT_ZONE_STATE     MQTT_BASE "/zone/%d/state"
-#define MQTT_ZONE_CMD       MQTT_BASE "/zone/%d/cmd"
+// Base topic is resolved at runtime from cfg.mqtt_base_topic. The
+// helper functions in mqtt.cpp build per-zone / per-action topics
+// from that base. The MQTT_DISCOVERY namespace stays compile-time.
 #define MQTT_DISCOVERY      "homeassistant"
 
 // ── HOTSPOT ───────────────────────────────────
